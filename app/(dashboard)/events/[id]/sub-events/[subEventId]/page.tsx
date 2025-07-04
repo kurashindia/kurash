@@ -1,8 +1,8 @@
 import { SubEventClient } from './client';
 
-export default async function SubEventPage({ params }: { params: { id: string, subEventId: string } }) {
-  // Destructure params at the top level to ensure they are properly awaited
-  const { id: eventId, subEventId } = await Promise.resolve(params);
+export default function SubEventPage({ params }: { params: { id: string, subEventId: string } }) {
+  // Destructure params directly (no async/await needed)
+  const { id: eventId, subEventId } = params;
 
   return <SubEventClient eventId={eventId} subEventId={subEventId} />;
 } 

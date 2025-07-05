@@ -450,7 +450,7 @@ export function SubEventClient({ eventId, subEventId }: Props) {
           ? new Date(subEvent.dob_range.split(',')[1].replace(']', '')) 
           : undefined)
         .gte('weight', subEvent.min_weight)
-        .lt('weight', subEvent.max_weight)
+        .lte('weight', subEvent.max_weight)
         .eq('gender', parentEvent.gender);
 
       if (error) {

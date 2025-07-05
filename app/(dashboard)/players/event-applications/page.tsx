@@ -237,112 +237,123 @@ export default function EventApplicationsPage() {
   }
 
   async function updateApplicationStatus(
-    applicationId: string,
-    newStatus: string,
-    type: string
-  ) {
-    try {
-      let result;
-      if (type === "main_event") {
-        // Update status in player_event_applications
-        result = await supabase
-          .from("player_event_applications")
-          .update({ status: newStatus })
-          .eq("id", applicationId);
+  applicationId: string,
+  newStatus: string,
+  type: string
+) {
+  try {
+    let result;
 
-        if (result.error) {
-          console.error("Error updating application status:", result.error);
-          alert("Failed to update application status");
+    if (type === "main_event") {
+      // 1. Update status in player_event_applications
+      result = await supabase
+        .from("player_event_applications")
+        .update({ status: newStatus })
+        .eq("id", applicationId);
+
+      if (result.error) {
+        console.error("Error updating application status:", result.error);
+        alert("Failed to update application status");
+        return;
+      }
+
+      // 2. If accepted, assign to sub_event_participants
+      if (newStatus === "accepted") {
+        // a. Fetch application details
+        const { data: applicationData, error: fetchError } = await supabase
+          .from("player_event_applications")
+          .select("player_id, event_id")
+          .eq("id", applicationId)
+          .single();
+
+        if (fetchError || !applicationData) {
+          console.error("Error fetching application:", fetchError);
+          alert("Failed to fetch application details");
           return;
         }
 
-        // If status is accepted, insert into sub_event_participants
-        if (newStatus === "accepted") {
-          // 1. Get player and event info from application
-          const { data: applicationData, error: fetchError } = await supabase
-            .from("player_event_applications")
-            .select("player_id, event_id")
-            .eq("id", applicationId)
-            .single();
+        // b. Fetch player weight
+        const { data: playerData, error: playerError } = await supabase
+          .from("players")
+          .select("id, weight")
+          .eq("id", applicationData.player_id)
+          .single();
 
-          if (fetchError) {
-            console.error("Error fetching application details:", fetchError);
-            alert("Failed to fetch application details");
-            return;
-          }
-
-          // 2. Get player weight
-          const { data: playerData, error: playerError } = await supabase
-            .from("players")
-            .select("weight")
-            .eq("id", applicationData.player_id)
-            .single();
-
-          if (playerError) {
-            console.error("Error fetching player weight:", playerError);
-            alert("Failed to fetch player details");
-            return;
-          }
-
-          // 3. Get matching sub_event by event_id and weight
-          const { data: subEventData, error: subEventError } = await supabase
-            .from("sub_events")
-            .select("id")
-            .eq("event_id", applicationData.event_id)
-            .lte("min_weight", playerData.weight)
-            .gt("max_weight", playerData.weight)
-            .maybeSingle(); // Use maybeSingle in case no match or 1 match
-
-          if (subEventError || !subEventData) {
-            console.error(
-              "Error fetching sub event:",
-              subEventError || "No matching sub_event"
-            );
-            alert("No matching sub-event found for this player weight.");
-            return;
-          }
-
-          // 4. Insert into sub_event_participants
-          const { error: insertError } = await supabase
-            .from("sub_event_participants")
-            .insert([
-              {
-                player_id: applicationData.player_id,
-                sub_event_id: subEventData.id,
-                created_at: new Date().toISOString(),
-              },
-            ]);
-
-          if (insertError) {
-            console.error(
-              "Error inserting into sub_event_participants:",
-              insertError
-            );
-            alert("Failed to add participant to sub event");
-            return;
-          }
+        if (playerError || !playerData) {
+          console.error("Error fetching player data:", playerError);
+          alert("Failed to fetch player details");
+          return;
         }
-      } else {
-        result = await supabase
-          .from("sub_event_applications")
-          .update({ status: newStatus })
-          .eq("id", applicationId);
-      }
 
-      const { error } = result;
+        // c. Fetch all sub_events for the event
+        const { data: subEvents, error: subEventError } = await supabase
+          .from("sub_events")
+          .select("id, min_weight, max_weight")
+          .eq("event_id", applicationData.event_id);
 
-      if (error) {
-        console.error("Error updating application status:", error);
-        alert("Failed to update application status");
-      } else {
-        // Refresh applications
-        fetchApplications();
-        window.location.reload();
+        if (subEventError || !subEvents || subEvents.length === 0) {
+          console.error("Error fetching sub events:", subEventError);
+          alert("No sub-events found for this event.");
+          return;
+        }
+
+        // d. Filter sub_event by custom weight logic
+        const matchingSubEvent = subEvents.find((se) => {
+          const min = se.min_weight ?? 0;
+          const max = se.max_weight ?? 999;
+          const weight = playerData.weight;
+
+          if (min === 0) return weight <= max;
+          return weight > min && weight <= max;
+        });
+
+        if (!matchingSubEvent) {
+          console.error("No matching sub_event for player weight.");
+          alert("Player's weight doesn't match any sub-event.");
+          return;
+        }
+
+        // e. Insert into sub_event_participants
+        const { error: insertError } = await supabase
+          .from("sub_event_participants")
+          .insert([
+            {
+              player_id: playerData.id,
+              sub_event_id: matchingSubEvent.id,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+
+        if (insertError) {
+          console.error("Insert failed:", insertError);
+          alert("Failed to add participant to sub-event.");
+          return;
+        }
+
+        console.log("✅ Player added to sub_event_participants.");
       }
-    } catch (error) {
-      console.error("Error:", error);
+    } else {
+      // For sub_event application status update
+      result = await supabase
+        .from("sub_event_applications")
+        .update({ status: newStatus })
+        .eq("id", applicationId);
     }
+
+    // Refresh view if successful
+    const { error } = result;
+    if (error) {
+      console.error("Error updating application status:", error);
+      alert("Failed to update application status");
+    } else {
+      fetchApplications(); // refresh UI
+      window.location.reload(); // force UI refresh
+    }
+  } catch (error) {
+    console.error("Unhandled error:", error);
+    alert("An unexpected error occurred.");
   }
+}
 
   function getFilteredPlayers() {
     if (!searchTerm) return players;

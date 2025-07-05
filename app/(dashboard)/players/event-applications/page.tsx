@@ -274,44 +274,69 @@ export default function EventApplicationsPage() {
 
         // b. Fetch player weight
         const { data: playerData, error: playerError } = await supabase
-          .from("players")
-          .select("id, weight")
-          .eq("id", applicationData.player_id)
-          .single();
+            .from("players")
+            .select("id, weight,birth_date")
+            .eq("id", applicationData.player_id)
+            .single();
 
-        if (playerError || !playerData) {
-          console.error("Error fetching player data:", playerError);
-          alert("Failed to fetch player details");
-          return;
-        }
+          if (playerError || !playerData) {
+            console.error("Error fetching player data:", playerError);
+            alert("Failed to fetch player details");
+            return;
+          }
 
-        // c. Fetch all sub_events for the event
-        const { data: subEvents, error: subEventError } = await supabase
-          .from("sub_events")
-          .select("id, min_weight, max_weight")
-          .eq("event_id", applicationData.event_id);
+          // c. Fetch all sub_events for the event
+          const { data: subEvents, error: subEventError } = await supabase
+            .from("sub_events")
+            .select("id, min_weight, max_weight,dob_range")
+            .eq("event_id", applicationData.event_id);
 
-        if (subEventError || !subEvents || subEvents.length === 0) {
-          console.error("Error fetching sub events:", subEventError);
-          alert("No sub-events found for this event.");
-          return;
-        }
+          if (subEventError || !subEvents || subEvents.length === 0) {
+            console.error("Error fetching sub events:", subEventError);
+            alert("No sub-events found for this event.");
+            return;
+          }
 
-        // d. Filter sub_event by custom weight logic
-        const matchingSubEvent = subEvents.find((se) => {
-          const min = se.min_weight ?? 0;
-          const max = se.max_weight ?? 999;
-          const weight = playerData.weight;
+          const parseDateRange = (rangeStr: string): [Date, Date] | null => {
+            if (!rangeStr || typeof rangeStr !== "string") return null;
 
-          if (min === 0) return weight <= max;
-          return weight > min && weight <= max;
-        });
+            // Remove brackets and split
+            const cleaned = rangeStr.replace(/[\[\]\(\)]/g, "");
+            const [startStr, endStr] = cleaned.split(",");
 
-        if (!matchingSubEvent) {
-          console.error("No matching sub_event for player weight.");
-          alert("Player's weight doesn't match any sub-event.");
-          return;
-        }
+            if (!startStr || !endStr) return null;
+
+            return [new Date(startStr), new Date(endStr)];
+          };
+
+          // d. Filter sub_event by custom weight logic
+          const matchingSubEvent = subEvents.find((se) => {
+            const weight = playerData.weight;
+            const birthDate = new Date(playerData.birth_date);
+
+            const minWeight = se.min_weight ?? 0;
+            const maxWeight = se.max_weight ?? 999;
+
+            const weightMatches =
+              (minWeight === 0 && weight <= maxWeight) ||
+              (weight > minWeight && weight <= maxWeight);
+
+            let dobMatches = false;
+            const parsedRange = parseDateRange(se.dob_range);
+
+            if (parsedRange) {
+              const [startDate, endDate] = parsedRange;
+              dobMatches = birthDate >= startDate && birthDate <= endDate;
+            }
+
+            return weightMatches && dobMatches;
+          });
+
+          if (!matchingSubEvent) {
+            console.error("No matching sub_event for player weight.");
+            alert("Player's weight doesn't match any sub-event.");
+            return;
+          }
 
         // e. Insert into sub_event_participants
         const { error: insertError } = await supabase
